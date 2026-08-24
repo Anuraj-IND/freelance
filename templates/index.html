@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Finder</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #0f1117; }
+  .brand { font-size: 1.4rem; font-weight: 700; letter-spacing: 0.5px; }
+  .brand span { color: #6c8cff; }
+  .card { border-color: #23283a; background: #151926; }
+  .log-box {
+    background: #0b0e15; border: 1px solid #23283a; border-radius: 8px;
+    font-family: Consolas, monospace; font-size: .8rem; max-height: 200px;
+    overflow-y: auto; white-space: pre-wrap; color: #9fb0d0;
+  }
+  table { --bs-table-color: #dce3f1; }
+  th { position: sticky; top: 0; background: #1b2133; z-index: 1; }
+  .score-pill { font-weight: 700; color: #fff; }
+  .score-high  { color: #63e6be; }
+  .score-mid   { color: #ffd43b; }
+  .score-low   { color: #74c0fc; }
+  .badge-none  { background: #ff6b6b; }
+  .badge-mobile{ background: #f59f00; }
+  .badge-ok    { background: #2f9e44; }
+  .offer-cell  { max-width: 320px; font-size: .78rem; color: #aeb9d4; }
+  a.source { color: #7aa2ff; text-decoration: none; }
+  a.source:hover { text-decoration: underline; }
+  .filter-input { max-width: 280px; }
+</style>
+</head>
+<body>
+<div class="container-fluid py-4">
+
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="brand">Lead<span>Finder</span></div>
+    <div id="run-state" class="text-secondary small">Scan 103 niches &middot; pick your target &middot; find outdated websites</div>
+  </div>
+
+  <div class="row g-4">
+    <!-- Control panel -->
+    <div class="col-lg-4 col-xl-3">
+      <div class="card p-3 mb-3">
+        <h6 class="card-title"><i class="bi bi-geo-alt"></i> Location</h6>
+        <div class="row g-2">
+          <div class="col-12">
+            <label class="form-label small">Country</label>
+            <input id="country" class="form-control form-control-sm" value="India" placeholder="e.g. India / Canada">
+          </div>
+          <div class="col-6">
+            <label class="form-label small">State <span class="text-muted">(India only)</span></label>
+            <input id="state" class="form-control form-control-sm" placeholder="Uttar Pradesh" disabled>
+          </div>
+          <div class="col-6">
+            <label class="form-label small">City <span class="text-muted">(India only)</span></label>
+            <input id="city" class="form-control form-control-sm" placeholder="Prayagraj" disabled>
+          </div>
+        </div>
+        <div class="mt-3">
+          <label class="form-label small">Results per niche</label>
+          <select id="max_results" class="form-select form-select-sm">
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
+          </select>
+        </div>
+        <div class="mt-3">
+          <label class="form-label small d-flex justify-content-between">
+            <span>Niches <span class="text-muted">({{ niches|length }} available)</span></span>
+            <span>
+              <a href="#" class="small" id="select-all">All</a> /
+              <a href="#" class="small" id="select-none">None</a>
+            </span>
+          </label>
+          <div id="niche-list" style="max-height: 280px; overflow-y: auto; font-size: .82rem;">
+            {% for niche, _ in niches %}
+            <div class="form-check">
+              <input class="form-check-input niche-cb" type="checkbox" value="{{ niche }}" id="n-{{ loop.index }}">
+              <label class="form-check-label" for="n-{{ loop.index }}">{{ niche }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <button id="run-btn" class="btn btn-primary w-100 mt-3"><i class="bi bi-play-fill"></i> Run Pipeline</button>
+        <div id="run-error" class="alert alert-danger d-none mt-2 py-2 small"></div>
+      </div>
+
+      <!-- Live log -->
+      <div class="card p-3">
+        <h6 class="card-title">Live Log</h6>
+        <div id="log-box" class="log-box p-2">Waiting to start…</div>
+      </div>
+    </div>
+
+    <!-- Results table -->
+    <div class="col-lg-8 col-xl-9">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+          <h6 class="card-title mb-0">Leads — <span id="lead-count" class="text-primary">0</span> found</h6>
+          <input id="table-search" class="form-control form-control-sm" placeholder="Search name / niche / city…" style="max-width:280px">
+        </div>
+        <div class="table-responsive" style="max-height: 74vh; overflow-y: auto;">
+          <table class="table table-hover table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Business Name</th>
+                <th>Category</th>
+                <th>Phone</th>
+                <th>Email</th>
+                <th>Website Status</th>
+                <th>Score</th>
+                <th>Source Link</th>
+                <th>Offer</th>
+              </tr>
+            </thead>
+            <tbody id="leads-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// --- Country toggles state/city fields ---
+function countryChanged() {
+  const val = $('country').value.trim().toLowerCase();
+  const isIndia = val === '' || val === 'india'; // empty = India (default)
+  $('state').disabled = !isIndia;
+  $('city').disabled = !isIndia;
+  if (!isIndia) { $('state').value = ''; $('city').value = ''; }
+}
+$('country').addEventListener('input', countryChanged); // fires while typing
+countryChanged(); // apply on page load
+
+$('select-all').addEventListener('click', (e) => { e.preventDefault(); document.querySelectorAll('.niche-cb').forEach(c => c.checked = true); });
+$('select-none').addEventListener('click', (e) => { e.preventDefault(); document.querySelectorAll('.niche-cb').forEach(c => c.checked = false); });
+document.querySelectorAll('.niche-cb').forEach(cnt => cnt.checked = true); // default all
+
+// --- Run pipeline ---
+let running = false;
+$('run-btn').addEventListener('click', async () => {
+  if (running) return;
+  const niches = [...document.querySelectorAll('.niche-cb:checked')].map(c => c.value);
+  if (!niches.length) { showError('Select at least one niche.'); return; }
+  $('run-error').classList.add('d-none');
+  const res = await fetch('/api/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      country: $('country').value,
+      state: $('state').value,
+      city: $('city').value,
+      niches,
+      max_results: parseInt($('max_results').value),
+    }),
+  });
+  const data = await res.json();
+  if (!data.ok) { showError(data.error); return; }
+  $('run-btn').disabled = true;
+  running = true;
+  $('run-state').textContent = `Running… ${data.niches} niches · ${data.location}`;
+  poll();
+});
+
+function showError(msg) {
+  $('run-error').textContent = msg;
+  $('run-error').classList.remove('d-none');
+}
+
+// --- Poll status + render table ---
+let lastLogCount = 0;
+async function poll() {
+  const res = await fetch('/api/status');
+  const data = await res.json();
+
+  if (data.logs.length !== lastLogCount) {
+    $('log-box').textContent = data.logs.slice(-40).join('\n');
+    $('log-box').scrollTop = $('log-box').scrollHeight;
+    lastLogCount = data.logs.length;
+  }
+
+  renderTable(data.leads);
+
+  if (!data.running) {
+    if (running) {
+      running = false;
+      $('run-btn').disabled = false;
+      $('run-state').textContent = data.error ? 'Failed — see log.' : `Done · ${data.leads.length} leads`;
+    }
+    return;
+  }
+  setTimeout(poll, 1500);
+}
+
+// --- Search filter ---
+let searchTerm = '';
+$('table-search').addEventListener('input', (e) => {
+  searchTerm = e.target.value.trim().toLowerCase();
+  const rows = document.querySelectorAll('#leads-tbody tr');
+  rows.forEach(r => {
+    r.style.display = r.textContent.toLowerCase().includes(searchTerm) ? '' : 'none';
+  });
+});
+
+function webBadge(l) {
+  const w = l.website;
+  if (!w) return '<span class="badge badge-none">No website</span>';
+  const issues = [];
+  if (!String(w).toLowerCase().startsWith('https://')) issues.push('no HTTPS');
+  if (!l.email) issues.push('no email / old site');
+  const cls = issues.length ? 'badge-mobile' : 'badge-ok';
+  return `<span class="badge ${cls}">${issues.length ? issues.join(', ') : 'Good'}</span>`;
+}
+
+function scorePill(s) {
+  const cls = s >= 70 ? 'score-high' : s >= 50 ? 'score-mid' : 'score-low';
+  return `<span class="score-pill ${cls}">${s}/100</span>`;
+}
+
+function renderTable(leads) {
+  $('lead-count').textContent = leads.length;
+  const tbody = $('leads-tbody');
+  tbody.innerHTML = leads.map((l, i) => {
+    const src = l.source_url
+      ? `<a class="source-link" href="${l.source_url}" target="_blank" rel="noopener">open</a>`
+      : '<span class="text-muted">—</span>';
+    const phone = l.phone || '<span class="text-muted">—</span>';
+    const email = l.email || '<span class="text-muted">—</span>';
+    const addr = l.address || '<span class="text-muted">—</span>';
+    return `<tr>
+      <td class="text-muted">${i + 1}</td>
+      <td>
+        <div class="fw-semibold">${esc(l.name)}</div>
+        <div class="small text-muted">${esc(addr)}</div>
+      </td>
+      <td><span class="small text-info">${esc(l.category)}</span></td>
+      <td class="small">${esc(phone)}</td>
+      <td class="small">${email}</td>
+      <td>${webBadge(l)}</td>
+      <td>${scorePill(l.opportunity_score)}<div class="small text-muted">${esc(l.score_reason || '')}</div></td>
+      <td>${src}</td>
+      <td class="a-cell small">${esc(l.offer || '')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+poll(); // load existing results on page open
+</script>
+</body>
+</html>
